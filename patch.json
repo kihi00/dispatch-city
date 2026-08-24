@@ -1,0 +1,4 @@
+﻿[
+  {"op":"add","path":"/spec/template/spec/containers/0/livenessProbe/timeoutSeconds","value":5},
+  {"op":"add","path":"/spec/template/spec/containers/0/readinessProbe/timeoutSeconds","value":5}
+]
