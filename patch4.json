@@ -1,0 +1,4 @@
+﻿[
+  {"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe","value":{"tcpSocket":{"port":"amqp"},"initialDelaySeconds":150,"periodSeconds":15,"timeoutSeconds":5,"failureThreshold":6}},
+  {"op":"replace","path":"/spec/template/spec/containers/0/readinessProbe","value":{"tcpSocket":{"port":"amqp"},"initialDelaySeconds":120,"periodSeconds":10,"timeoutSeconds":5,"failureThreshold":6}}
+]
