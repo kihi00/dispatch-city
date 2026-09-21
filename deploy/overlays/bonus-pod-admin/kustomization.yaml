@@ -1,0 +1,9 @@
+# Eigene Erweiterung ueber den Kursstand hinaus: Pod-Admin-Steuerung im Dashboard.
+# Baut auf der letzten Ausbaustufe auf und ergaenzt nur Rechte und deren Verdrahtung.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../block-07-observability
+  - rbac-control-api-admin.yaml
+patches:
+  - path: control-api-admin-patch.yaml

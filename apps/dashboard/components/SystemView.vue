@@ -156,14 +156,21 @@ async function onChaos(id: string) {
 
 <style scoped>
 .pod-names {
+  /* .system-node ist ein Dreispalten-Grid - ohne dies landet die Liste in einer Spalte */
+  grid-column: 1 / -1;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 4px;
   margin-top: 8px;
 }
 .pod-name {
   font-family: monospace;
   font-size: 10px;
+  /* .system-node span vererbt uppercase - Podnamen sind aber Kleinschreibung */
+  text-transform: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   padding: 2px 6px;
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.06);
@@ -175,6 +182,7 @@ async function onChaos(id: string) {
   border-color: rgba(62, 207, 142, 0.3);
 }
 .admin-controls {
+  grid-column: 1 / -1;
   display: flex;
   gap: 4px;
   margin-top: 8px;

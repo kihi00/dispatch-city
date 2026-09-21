@@ -27,31 +27,31 @@ flowchart LR
     Grafana --> Prometheus
 ```
 
-| Komponente | Aufgabe | Betrieb |
-|---|---|---|
-| `dashboard` | 2.5D-Stadt, Systemansicht, Steuerung | Deployment, 2 Replicas |
-| `control-api` | REST, SSE, Health, Metrics | Deployment, ab Ausbaustufe 6 zwei Replicas |
-| `customer-simulator` | erzeugt Kunden und Bestellungen | StatefulSet |
-| `restaurant-worker` | nimmt Bestellungen an oder lehnt ab | je ein Deployment pro Restaurant |
-| `courier-simulator` | Fahrten und Zustellungen | StatefulSet |
-| `order-worker` | Projektion und Idempotenz | Deployment, 2 Replicas |
-| `rabbitmq` | Topic Exchange, Queues, DLQ | StatefulSet mit PVC |
-| `food-delivery-db` | PostgreSQL Primary und Standby | CloudNativePG Cluster-Resource |
-| `cluster-observer` | liest Workload-Zustände aus der Kubernetes-API | Deployment mit eigener Role |
-| Monitoring | Prometheus, Grafana, ServiceMonitors | Helm-Release im Namespace `monitoring` |
+| Komponente             | Aufgabe                                         | Betrieb                                    |
+| ---------------------- | ----------------------------------------------- | ------------------------------------------ |
+| `dashboard`          | 2.5D-Stadt, Systemansicht, Steuerung            | Deployment, 2 Replicas                     |
+| `control-api`        | REST, SSE, Health, Metrics                      | Deployment, ab Ausbaustufe 6 zwei Replicas |
+| `customer-simulator` | erzeugt Kunden und Bestellungen                 | StatefulSet                                |
+| `restaurant-worker`  | nimmt Bestellungen an oder lehnt ab             | je ein Deployment pro Restaurant           |
+| `courier-simulator`  | Fahrten und Zustellungen                        | StatefulSet                                |
+| `order-worker`       | Projektion und Idempotenz                       | Deployment, 2 Replicas                     |
+| `rabbitmq`           | Topic Exchange, Queues, DLQ                     | StatefulSet mit PVC                        |
+| `food-delivery-db`   | PostgreSQL Primary und Standby                  | CloudNativePG Cluster-Resource             |
+| `cluster-observer`   | liest Workload-Zustände aus der Kubernetes-API | Deployment mit eigener Role                |
+| Monitoring             | Prometheus, Grafana, ServiceMonitors            | Helm-Release im Namespace`monitoring`    |
 
 ## Eventfluss
 
 Alle Events gehen an den Topic Exchange `food.events`. Der Routing Key ist der Event-Typ; bei `order.created` wird die Restaurant-ID angehängt, damit jede Küche nur ihre eigenen Bestellungen erhält.
 
-| Queue | Consumer | Bindings | Zweck |
-|---|---|---|---|
-| `restaurant.<restaurant-id>` | `restaurant-worker` | `order.created.<restaurant-id>` | Bestellungen einer Küche |
-| `courier-dispatch` | `courier-simulator` | `order.accepted` | Fahrt starten |
-| `order-projection` | `order-worker`, 2 Replicas | `order.#`, `courier.#`, `customer.#`, `simulation.#` | Projektion in PostgreSQL |
-| `live.<pod>` | `control-api`, je Pod eine eigene Queue | `#` | Live-Updates für den SSE-Stream |
-| `simulation-control.<pod>` | `customer-simulator` | `simulation.#` | Start, Pause, Reset |
-| `food.dead` | — | `#` über den Dead Letter Exchange `food.dlx` | dauerhaft fehlerhafte Nachrichten |
+| Queue                          | Consumer                                  | Bindings                                                     | Zweck                             |
+| ------------------------------ | ----------------------------------------- | ------------------------------------------------------------ | --------------------------------- |
+| `restaurant.<restaurant-id>` | `restaurant-worker`                     | `order.created.<restaurant-id>`                            | Bestellungen einer Küche         |
+| `courier-dispatch`           | `courier-simulator`                     | `order.accepted`                                           | Fahrt starten                     |
+| `order-projection`           | `order-worker`, 2 Replicas              | `order.#`, `courier.#`, `customer.#`, `simulation.#` | Projektion in PostgreSQL          |
+| `live.<pod>`                 | `control-api`, je Pod eine eigene Queue | `#`                                                        | Live-Updates für den SSE-Stream  |
+| `simulation-control.<pod>`   | `customer-simulator`                    | `simulation.#`                                             | Start, Pause, Reset               |
+| `food.dead`                  | —                                        | `#` über den Dead Letter Exchange `food.dlx`            | dauerhaft fehlerhafte Nachrichten |
 
 Weg einer Bestellung:
 
@@ -68,24 +68,24 @@ Jedes Event trägt `event_id`, `event_type`, `event_version`, `occurred_at`, `co
 
 Der Order Worker ist der einzige Schreiber des fachlichen Zustands. Alle anderen Dienste lesen oder reagieren auf Events.
 
-| Tabelle | Inhalt |
-|---|---|
-| `restaurants`, `customers`, `couriers` | Stammdaten der Simulation |
-| `orders` | aktueller Zustand einer Bestellung |
-| `order_events` | fachlicher Verlauf je Bestellung, Schlüssel `event_id` |
-| `processed_events` | bereits verarbeitete `event_id`, Grundlage der Idempotenz |
+| Tabelle                                      | Inhalt                                                     |
+| -------------------------------------------- | ---------------------------------------------------------- |
+| `restaurants`, `customers`, `couriers` | Stammdaten der Simulation                                  |
+| `orders`                                   | aktueller Zustand einer Bestellung                         |
+| `order_events`                             | fachlicher Verlauf je Bestellung, Schlüssel`event_id`   |
+| `processed_events`                         | bereits verarbeitete`event_id`, Grundlage der Idempotenz |
 
 Zugriff läuft ausschliesslich über die vom Operator verwalteten Services: `food-delivery-db-rw` für Schreibzugriffe auf den Primary, `-ro` für Lesezugriffe auf die Standbys und `-r` für alle Instanzen. Die Anwendung kennt keinen Pod-Namen.
 
 ## Wichtigste Entscheidungen
 
-| Entscheidung | Grund | Preis |
-|---|---|---|
-| Control API bis Ausbaustufe 5 mit einer Replica, ab Ausbaustufe 6 mit zwei | Solange der Zustand im Speicher liegt, hätte jede Replica ihre eigene Wahrheit. Mit PostgreSQL teilen sich alle dieselbe Quelle. | Der Schritt zur Skalierbarkeit kostet eine Datenbank samt Betrieb |
-| Ein Kustomize-Overlay je Ausbaustufe, verkettet auf die vorherige | Jeder Kursblock bleibt einzeln deploybar, die Unterschiede sind sichtbar, keine kopierten YAML-Dateien | Man muss die Kette kennen, um zu wissen, was ein Overlay erbt |
-| At-least-once mit Idempotenz über die `event_id` | Keine Nachricht geht verloren; der Dedupe-Eintrag und die fachliche Wirkung liegen in derselben Transaktion | Duplikate sind möglich und müssen im Consumer abgefangen werden |
-| Dauerhafte Fehler ohne Requeue in die DLQ | Eine kaputte Nachricht blockiert die normale Queue nicht | Ohne Wiederholungsversuch landen auch kurzzeitige Fehler in `food.dead` |
-| Asynchrone Replikation in PostgreSQL | Schnelle Schreibzugriffe, Failover ohne Wartezeit auf den Standby | Ein Ausfall vor dem Replay kann die letzten bestätigten Transaktionen kosten |
+| Entscheidung                                                               | Grund                                                                                                                             | Preis                                                                         |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Control API bis Ausbaustufe 5 mit einer Replica, ab Ausbaustufe 6 mit zwei | Solange der Zustand im Speicher liegt, hätte jede Replica ihre eigene Wahrheit. Mit PostgreSQL teilen sich alle dieselbe Quelle. | Der Schritt zur Skalierbarkeit kostet eine Datenbank samt Betrieb             |
+| Ein Kustomize-Overlay je Ausbaustufe, verkettet auf die vorherige          | Jeder Kursblock bleibt einzeln deploybar, die Unterschiede sind sichtbar, keine kopierten YAML-Dateien                            | Man muss die Kette kennen, um zu wissen, was ein Overlay erbt                 |
+| At-least-once mit Idempotenz über die`event_id`                         | Keine Nachricht geht verloren; der Dedupe-Eintrag und die fachliche Wirkung liegen in derselben Transaktion                       | Duplikate sind möglich und müssen im Consumer abgefangen werden             |
+| Dauerhafte Fehler ohne Requeue in die DLQ                                  | Eine kaputte Nachricht blockiert die normale Queue nicht                                                                          | Ohne Wiederholungsversuch landen auch kurzzeitige Fehler in`food.dead`      |
+| Asynchrone Replikation in PostgreSQL                                       | Schnelle Schreibzugriffe, Failover ohne Wartezeit auf den Standby                                                                 | Ein Ausfall vor dem Replay kann die letzten bestätigten Transaktionen kosten |
 
 ## Ausbaustufen
 
@@ -153,3 +153,11 @@ Readiness und Liveness trennen zwei Fragen. Eine fehlgeschlagene Readiness-Probe
 Rolling Updates und Rollback haben wir im Übungs-Namespace `betrieb-lab` durchgespielt: Mit `maxUnavailable: 0` und `maxSurge: 1` blockiert ein unbrauchbares Image das Update, statt die Verfügbarkeit zu senken. In Dispatch City gilt die Kubernetes-Vorgabe von 25 % / 25 %. `rollout undo` setzt in beiden Fällen die Pod-Vorlage zurück, nicht den Datenbestand.
 
 Jeder Container deklariert CPU-Requests und -Limits. Der Request ist die Grundlage der Platzierung und die Bezugsgrösse des HPA-Ziels, das Limit die Obergrenze zur Laufzeit — bei CPU wird gedrosselt, bei Memory beendet.
+
+## Eigene Erweiterung: Pod-Steuerung aus dem Dashboard
+
+Über die Pflichtanforderungen hinaus steuert das Dashboard die Workloads jetzt direkt. Auslöser war eine Beobachtung aus den Übungen: Wir haben Selbstheilung, Skalierung und Rollouts immer über `kubectl` ausgelöst und die Wirkung danach im Dashboard gesucht — zwei Fenster für einen Vorgang.
+
+Die Control API übernimmt dafür eine zweite Rolle. Sie bedient nicht mehr nur die Simulation, sondern spricht auch mit der Kubernetes-API und bietet fünf Endpunkte an: Pods eines Deployments auflisten, Rolling Restart, Replicas setzen, einen Pod löschen und den HPA-Zustand lesen. Welche Deployments überhaupt ansprechbar sind, begrenzt eine Allowlist — RabbitMQ und die Datenbank sind ausgeschlossen.
+
+Die Erweiterung liegt in einem eigenen Overlay `bonus-pod-admin`, das auf der letzten Ausbaustufe aufbaut. Der Kursstand bleibt damit unter `block-07-observability` unverändert deploybar.

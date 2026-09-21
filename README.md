@@ -85,7 +85,15 @@ sh platform/monitoring/start-course.sh    # Windows: ./platform/monitoring/start
 
 Baut den cluster-observer, importiert ihn, installiert den kube-prometheus-stack und wendet das Overlay `block-07-observability` an. Der erste Durchlauf dauert einige Minuten.
 
-### 7. Zugriff
+### 7. Eigene Erweiterung
+
+```bash
+kubectl apply -k deploy/overlays/bonus-pod-admin
+```
+
+Schaltet die Pod-Steuerung im Dashboard frei (siehe unten). Ohne diesen Schritt läuft das System vollständig, die Steuerknöpfe in der Systemansicht antworten aber mit 503.
+
+### 8. Zugriff
 
 Je ein eigenes Terminal, bleibt offen:
 
@@ -119,10 +127,41 @@ kubectl -n food-delivery exec rabbitmq-0 -- rabbitmqctl list_queues name message
 
 Erwartet: `messages_ready` bleibt bei den fachlichen Queues nahe null, jede Restaurant-Queue hat einen Consumer, `order-projection` hat zwei.
 
+## Eigene Erweiterung: Pod-Steuerung aus dem Dashboard
+
+Über die Pflichtanforderungen hinaus haben wir die Systemansicht des Dashboards um eine direkte Steuerung der Workloads erweitert. Der Gedanke dahinter: Im Unterricht haben wir Selbstheilung, Skalierung und Rollouts immer über `kubectl` ausgelöst und die Wirkung anschliessend im Dashboard gesucht. Jetzt passiert beides am selben Ort.
+
+Die Control API spricht dazu selbst mit der Kubernetes-API und stellt fünf Endpunkte bereit:
+
+| Endpunkt                                   | Wirkung                                      |
+| ------------------------------------------ | -------------------------------------------- |
+| `GET /api/v1/pods/{deployment}`          | Pods eines Deployments mit Ready-Zustand     |
+| `POST /api/v1/pods/{deployment}/restart` | Rolling Restart                              |
+| `POST /api/v1/pods/{deployment}/scale`   | Replica-Zahl setzen (0–5)                   |
+| `POST /api/v1/pods/{deployment}/chaos`   | einen Pod löschen, Selbstheilung beobachten |
+| `GET /api/v1/hpa`                        | HPA-Zustand im Namespace                     |
+
+Die Rechte dafür sind bewusst eng gefasst: ein eigener ServiceAccount `control-api` mit einer Role, die nur im Namespace `food-delivery` gilt und nur die nötigen Verben erlaubt (`patch` auf Deployments, `list`/`delete` auf Pods, lesend auf HPAs). Zusätzlich begrenzt eine Allowlist im Code, welche Deployments überhaupt ansprechbar sind — RabbitMQ und die Datenbank sind ausgeschlossen. Läuft die Anwendung ausserhalb von Kubernetes, bleibt der Controller leer und die Endpunkte antworten mit 503, statt abzustürzen.
+
+Alles davon liegt in einem eigenen Overlay `deploy/overlays/bonus-pod-admin`, das auf der letzten Ausbaustufe aufbaut. Der Kursstand bleibt damit unter `block-07-observability` unverändert deploybar.
+
+Ausprobieren:
+
+```bash
+curl -s http://localhost:8081/api/v1/pods/order-worker
+curl -s -X POST -H 'Content-Type: application/json' -d '{"replicas":2}' \
+  http://localhost:8081/api/v1/pods/restaurant-pizza/scale
+kubectl -n food-delivery exec rabbitmq-0 -- rabbitmqctl list_queues name consumers
+```
+
+Nach dem Hochskalieren stehen zwei Consumer auf `restaurant.restaurant-pizza` — Competing Consumers, ausgelöst per Klick.
+
+Zwei bekannte Grenzen: Das Autoscaler-Feld bleibt leer, weil in `food-delivery` bewusst kein HPA läuft, und die drei Restaurants sind zwar über die API steuerbar, in der Oberfläche aber noch nicht, weil sie dort als eine Sammelkachel dargestellt werden.
+
 ## Reset
 
 ```bash
-kubectl delete -k deploy/overlays/block-07-observability      # Anwendung entfernen, Cluster bleibt
+kubectl delete -k deploy/overlays/bonus-pod-admin             # Anwendung entfernen, Cluster bleibt
 k3d cluster stop teko-k8s                                     # Cluster anhalten, Daten bleiben
 k3d cluster delete teko-k8s                                   # Cluster samt Daten entfernen
 kubectl delete namespace betrieb-lab                          # Übungs-Namespace aus Block 7
@@ -139,7 +178,8 @@ cmd/                   Go-Dienste: control-api, customer-simulator, restaurant-w
 internal/              Messaging, Persistenz, API, Cluster-Beobachtung, Telemetrie
 build/                 Dockerfile für die Go-Dienste
 deploy/base/           Namespace, ConfigMap, Deployments, Services
-deploy/overlays/       ein Overlay je Ausbaustufe, block-03-standalone bis block-07-observability
+deploy/overlays/       ein Overlay je Ausbaustufe, block-03-standalone bis block-07-observability,
+                       dazu bonus-pod-admin für die eigene Erweiterung
 platform/              Helm-Installationen: CloudNativePG und kube-prometheus-stack
 scripts/               Build, Import und Labor-Skripte
 labs/block-07/         Übungen zu Ressourcen und HPA im Namespace betrieb-lab
@@ -155,8 +195,6 @@ docs/                  Architektur und Reflexion
 ## Aufgabenverteilung
 
 Wir haben alle Ausbaustufen gemeinsam erarbeitet: Aufgaben lesen, Manifeste durchgehen, deployen, Fehler suchen und die Ergebnisse im Cluster nachvollziehen. Gearbeitet wurde abwechselnd auf der einen und auf der anderen Maschine, jeweils zu zweit am selben Stand. Entsprechend committet die Person, auf deren Maschine der Block entstanden ist.
-
-Die Zuordnung ist in der Historie sichtbar: `git log --format='%h %an %s'`.
 
 ## Weiterführend
 

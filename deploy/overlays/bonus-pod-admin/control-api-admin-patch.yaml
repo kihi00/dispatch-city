@@ -1,0 +1,20 @@
+# Verbindet die control-api mit dem ServiceAccount aus rbac-control-api-admin.yaml
+# und reicht den Namespace ueber die Downward API hinein. Ohne beides bleibt der
+# Cluster-Controller in cmd/control-api/main.go nil und die Admin-Endpunkte
+# (/api/v1/pods/..., /api/v1/hpa) antworten mit 503.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-api
+  namespace: food-delivery
+spec:
+  template:
+    spec:
+      serviceAccountName: control-api
+      containers:
+        - name: control-api
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace

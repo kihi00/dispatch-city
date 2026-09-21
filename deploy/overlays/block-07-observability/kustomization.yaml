@@ -6,7 +6,6 @@ resources:
   - rabbitmq-plugins.yaml
   - monitoring.yaml
   - grafana-dashboard.yaml
-  - rbac-control-api-admin.yaml
 patches:
   - path: observability-patches.yaml
 labels:
