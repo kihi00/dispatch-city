@@ -14,9 +14,9 @@ Die Systemansicht zeigt live den Zustand aller Deployments. Bei `control-api` un
 
 Restart-Klick bei `order-worker` im Dashboard:
 
-<img width="88" height="63" alt="Order Worker Karte" src="https://github.com/user-attachments/assets/1a671d92-cb21-4136-9bb6-0d92b55d17e6" />
+<img width="88" height="63" alt="image" src="https://github.com/user-attachments/assets/a106dc38-118f-4701-972c-2d340bf19d45" />
 
-<img width="96" height="95" alt="Order Worker nach Restart-Klick" src="https://github.com/user-attachments/assets/639f165b-14e7-490d-b0a3-21089ae18a1f" />
+<img width="96" height="95" alt="image" src="https://github.com/user-attachments/assets/0a17ebf1-f459-4448-9ab4-030ca964350b" />
 
 **Skalierung, unabhängig per `kubectl` verifiziert** — `kubectl -n food-delivery get deployment order-worker`:
 
