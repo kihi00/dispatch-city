@@ -9,22 +9,6 @@ export interface HpaStatus {
   cpu_percent?: number
 }
 
-export interface PodInstance {
-  name: string
-  ready: boolean
-}
-
-export interface PodsStatus {
-  deployment: string
-  desired: number
-  ready: number
-  pods: PodInstance[]
-}
-
-// Deployments the admin endpoints can act on — kept in sync with
-// allowedAdminDeployments in internal/api/server.go.
-const CONTROLLABLE_DEPLOYMENTS = ['control-api', 'order-worker', 'restaurant-pizza', 'restaurant-bowl', 'restaurant-curry']
-
 const emptySnapshot = (): Snapshot => ({
   mode: 'standalone',
   running: false,
@@ -47,36 +31,6 @@ export function useDeliveryApi() {
   const lastError = useState<string>('delivery-error', () => '')
   const hpaStatus = useState<HpaStatus[]>('delivery-hpa', () => [])
   const adminError = useState<string>('delivery-admin-error', () => '')
-  const adminNotice = useState<string>('delivery-admin-notice', () => '')
-  let noticeTimer: ReturnType<typeof setTimeout> | undefined
-  const podInstances = useState<Record<string, PodsStatus>>('delivery-pod-instances', () => ({}))
-  let podInstancesTimer: ReturnType<typeof setInterval> | undefined
-
-  async function refreshPodInstances() {
-    const results = await Promise.all(
-      CONTROLLABLE_DEPLOYMENTS.map(async (name) => {
-        try {
-          const status = await $fetch<PodsStatus>(endpoint(`/api/v1/pods/${name}`))
-          return [name, status] as const
-        } catch {
-          return null
-        }
-      }),
-    )
-    const next = { ...podInstances.value }
-    for (const entry of results) {
-      if (entry) next[entry[0]] = entry[1]
-    }
-    podInstances.value = next
-  }
-
-  function showNotice(message: string) {
-    adminNotice.value = message
-    if (noticeTimer) clearTimeout(noticeTimer)
-    noticeTimer = setTimeout(() => {
-      adminNotice.value = ''
-    }, 4000)
-  }
   let eventSource: EventSource | undefined
   let refreshTimer: ReturnType<typeof setTimeout> | undefined
   let pollTimer: ReturnType<typeof setInterval> | undefined
@@ -146,9 +100,7 @@ export function useDeliveryApi() {
     adminError.value = ''
     try {
       await $fetch(endpoint(`/api/v1/pods/${deployment}/restart`), { method: 'POST' })
-      showNotice(`${deployment}: Neustart ausgelöst`)
       await refreshSnapshot()
-      await refreshPodInstances()
     } catch (error) {
       adminError.value = error instanceof Error ? error.message : 'Restart fehlgeschlagen'
     }
@@ -161,9 +113,7 @@ export function useDeliveryApi() {
         method: 'POST',
         body: { replicas },
       })
-      showNotice(`${deployment}: skaliert auf ${replicas} Replicas`)
       await refreshSnapshot()
-      await refreshPodInstances()
     } catch (error) {
       adminError.value = error instanceof Error ? error.message : 'Skalierung fehlgeschlagen'
     }
@@ -172,10 +122,8 @@ export function useDeliveryApi() {
   async function chaosPod(deployment: string) {
     adminError.value = ''
     try {
-      const result = await $fetch<{ pod?: string }>(endpoint(`/api/v1/pods/${deployment}/chaos`), { method: 'POST' })
-      showNotice(`${deployment}: Pod ${result.pod ?? ''} gelöscht — Kubernetes startet neuen Pod`)
+      await $fetch(endpoint(`/api/v1/pods/${deployment}/chaos`), { method: 'POST' })
       await refreshSnapshot()
-      await refreshPodInstances()
     } catch (error) {
       adminError.value = error instanceof Error ? error.message : 'Chaos-Aktion fehlgeschlagen'
     }
@@ -184,11 +132,9 @@ export function useDeliveryApi() {
   onMounted(async () => {
     await refreshSnapshot()
     await refreshHpa()
-    await refreshPodInstances()
     connect()
     pollTimer = setInterval(refreshSnapshot, 5000)
     hpaTimer = setInterval(refreshHpa, 5000)
-    podInstancesTimer = setInterval(refreshPodInstances, 3000)
   })
 
   onBeforeUnmount(() => {
@@ -196,8 +142,6 @@ export function useDeliveryApi() {
     if (refreshTimer) clearTimeout(refreshTimer)
     if (pollTimer) clearInterval(pollTimer)
     if (hpaTimer) clearInterval(hpaTimer)
-    if (noticeTimer) clearTimeout(noticeTimer)
-    if (podInstancesTimer) clearInterval(podInstancesTimer)
   })
 
   return {
@@ -207,8 +151,6 @@ export function useDeliveryApi() {
     lastError,
     hpaStatus,
     adminError,
-    adminNotice,
-    podInstances,
     refreshSnapshot,
     start: () => command('/api/v1/simulation/start'),
     pause: () => command('/api/v1/simulation/pause'),

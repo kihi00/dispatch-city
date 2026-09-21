@@ -9,8 +9,19 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/teko/food-delivery/internal/cluster"
 	"github.com/teko/food-delivery/internal/simulation"
 )
+
+// allowedAdminDeployments is an allowlist so the dashboard can't target
+// arbitrary workloads via the admin endpoints.
+var allowedAdminDeployments = map[string]bool{
+	"control-api":       true,
+	"order-worker":      true,
+	"restaurant-pizza":  true,
+	"restaurant-bowl":   true,
+	"restaurant-curry":  true,
+}
 
 // Server exposes the simulation over REST and Server-Sent Events.
 type Server struct {
@@ -18,12 +29,15 @@ type Server struct {
 	commands Commands
 	logger   *slog.Logger
 	http     *http.Server
+	cluster  *cluster.Observer // nil outside the Kubernetes cluster -> admin routes return 503
 }
 
 // NewServer constructs an API server with all routes registered.
-func NewServer(addr string, engine *simulation.Engine, commands Commands, logger *slog.Logger) *Server {
+// controller may be nil (e.g. standalone/local dev) — admin endpoints
+// then respond with 503 instead of panicking.
+func NewServer(addr string, engine *simulation.Engine, commands Commands, logger *slog.Logger, controller *cluster.Observer) *Server {
 	mux := http.NewServeMux()
-	server := &Server{engine: engine, commands: commands, logger: logger}
+	server := &Server{engine: engine, commands: commands, logger: logger, cluster: controller}
 	mux.HandleFunc("GET /api/v1/snapshot", server.snapshot)
 	mux.HandleFunc("GET /api/v1/events", server.events)
 	mux.HandleFunc("POST /api/v1/simulation/start", server.start)
@@ -33,6 +47,14 @@ func NewServer(addr string, engine *simulation.Engine, commands Commands, logger
 	mux.HandleFunc("GET /health/live", server.health)
 	mux.HandleFunc("GET /health/ready", server.health)
 	mux.HandleFunc("GET /metrics", server.metrics)
+
+	// Admin / cluster-control endpoints (Block 7 Bonus)
+	mux.HandleFunc("GET /api/v1/hpa", server.hpaStatus)
+	mux.HandleFunc("GET /api/v1/pods/{deployment}", server.podInstances)
+	mux.HandleFunc("POST /api/v1/pods/{deployment}/restart", server.restartDeployment)
+	mux.HandleFunc("POST /api/v1/pods/{deployment}/scale", server.scaleDeployment)
+	mux.HandleFunc("POST /api/v1/pods/{deployment}/chaos", server.chaosKillPod)
+
 	server.http = &http.Server{
 		Addr:              addr,
 		Handler:           requestLog(logger, cors(mux)),
@@ -152,6 +174,106 @@ func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintf(w, "# TYPE food_delivery_events_total counter\n")
 	fmt.Fprintf(w, "food_delivery_events_total %d\n", snapshot.Stats.Events)
 }
+
+// --- Admin / cluster-control (Block 7 Bonus) --------------------------------
+
+func (s *Server) hpaStatus(w http.ResponseWriter, r *http.Request) {
+	if s.cluster == nil {
+		http.Error(w, "cluster controller not available in this environment", http.StatusServiceUnavailable)
+		return
+	}
+	statuses, err := s.cluster.HorizontalPodAutoscalers(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, statuses)
+}
+
+func (s *Server) podInstances(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("deployment")
+	if !allowedAdminDeployments[name] {
+		http.Error(w, "deployment not allowed: "+name, http.StatusForbidden)
+		return
+	}
+	if s.cluster == nil {
+		http.Error(w, "cluster controller not available in this environment", http.StatusServiceUnavailable)
+		return
+	}
+	status, err := s.cluster.PodInstances(r.Context(), name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) restartDeployment(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("deployment")
+	if !allowedAdminDeployments[name] {
+		http.Error(w, "deployment not allowed: "+name, http.StatusForbidden)
+		return
+	}
+	if s.cluster == nil {
+		http.Error(w, "cluster controller not available in this environment", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.cluster.RestartDeployment(r.Context(), name); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "restart triggered", "deployment": name})
+}
+
+type scaleRequest struct {
+	Replicas int `json:"replicas"`
+}
+
+func (s *Server) scaleDeployment(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("deployment")
+	if !allowedAdminDeployments[name] {
+		http.Error(w, "deployment not allowed: "+name, http.StatusForbidden)
+		return
+	}
+	if s.cluster == nil {
+		http.Error(w, "cluster controller not available in this environment", http.StatusServiceUnavailable)
+		return
+	}
+	var req scaleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	if req.Replicas < 0 || req.Replicas > 5 {
+		http.Error(w, "replicas must be 0-5", http.StatusBadRequest)
+		return
+	}
+	if err := s.cluster.ScaleDeployment(r.Context(), name, req.Replicas); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "scaled", "deployment": name, "replicas": req.Replicas})
+}
+
+func (s *Server) chaosKillPod(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("deployment")
+	if !allowedAdminDeployments[name] {
+		http.Error(w, "deployment not allowed: "+name, http.StatusForbidden)
+		return
+	}
+	if s.cluster == nil {
+		http.Error(w, "cluster controller not available in this environment", http.StatusServiceUnavailable)
+		return
+	}
+	killed, err := s.cluster.ChaosKillPod(r.Context(), name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "chaos: pod gelöscht", "deployment": name, "pod": killed})
+}
+
+// --- Helpers -----------------------------------------------------------
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")

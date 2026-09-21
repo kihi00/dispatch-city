@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/teko/food-delivery/internal/api"
+	"github.com/teko/food-delivery/internal/cluster"
 	"github.com/teko/food-delivery/internal/events"
 	"github.com/teko/food-delivery/internal/messaging"
 	"github.com/teko/food-delivery/internal/model"
@@ -71,7 +72,24 @@ func main() {
 			}
 		}()
 	}
-	server := api.NewServer(":"+env("PORT", "8080"), engine, commands, logger)
+
+	// Cluster-Controller für die Admin-Endpoints (Block 7 Bonus:
+	// Restart/Scale/Chaos/HPA). Nur verfügbar, wenn control-api
+	// tatsächlich in Kubernetes läuft (SA-Token gemountet) — im
+	// lokalen "standalone"-Modus bleibt er nil, Admin-Routen
+	// antworten dann mit 503 statt zu crashen.
+	var controller *cluster.Observer
+	if namespace := env("POD_NAMESPACE", ""); namespace != "" {
+		var err error
+		controller, err = cluster.NewInCluster(namespace)
+		if err != nil {
+			logger.Warn("cluster controller unavailable, admin endpoints disabled", "error", err)
+		}
+	} else {
+		logger.Info("POD_NAMESPACE not set, admin endpoints disabled (expected outside Kubernetes)")
+	}
+
+	server := api.NewServer(":"+env("PORT", "8080"), engine, commands, logger, controller)
 
 	go func() {
 		if err := engine.Run(ctx, interval); err != nil && !errors.Is(err, context.Canceled) {
