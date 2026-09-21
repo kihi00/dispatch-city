@@ -2,7 +2,7 @@
 
 Visuelles Food-Delivery-System als verteilte Kubernetes-Anwendung. Kunden erzeugen Bestellungen als Events, Restaurant-Worker nehmen sie an, Kuriere liefern sichtbar aus, der Order Worker hält den fachlichen Zustand konsistent in PostgreSQL. Das Dashboard zeigt fachliche Vorgänge und Clusterzustand in einer Live-Ansicht.
 
-Transferarbeit VSC-01, Kilian Hirschi und Kim Flückiger, TEKO Olten.
+Transferarbeit VSC-01, Kilian Hirschi und Kim Flükiger, TEKO Olten.
 
 | Baustein                         | Technologie                                       |
 | -------------------------------- | ------------------------------------------------- |
