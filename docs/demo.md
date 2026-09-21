@@ -37,7 +37,7 @@ Die vier Knöpfe auf den Karten rufen Admin-Endpoints der Control API auf. Die C
 | Knopf | Wirkung im Cluster |
 |---|---|
 | Neustart (Pfeil) | setzt im Pod-Template die Annotation `kubectl.kubernetes.io/restartedAt`, wie `kubectl rollout restart` |
-| Plus / Minus | setzt `spec.replicas` des Deployments um eins höher oder tiefer |
+| Plus / Minus | setzt `spec.replicas` auf den Sollwert der Karte plus oder minus eins. Die Karte zeigt immer 2, Plus setzt also 3 und Minus 1, ein zweiter Klick ändert nichts mehr |
 | Totenkopf | löscht nach einer Rückfrage einen zufällig gewählten Pod des Deployments |
 
 Damit die Control API das darf, läuft sie unter einem eigenen ServiceAccount. Dessen Role erlaubt neben Leserechten nur, Deployments zu patchen und Pods aufzulisten und zu löschen (`deploy/overlays/bonus-pod-admin/rbac-control-api-admin.yaml`). Zusätzlich lässt der Code nur fünf Deployments zu: Control API, Order Worker und die drei Restaurants (`internal/api/server.go`). Die Aufrufe gegen Kubernetes stehen in `internal/cluster/controller.go`.
@@ -70,7 +70,7 @@ NAME           READY   UP-TO-DATE   AVAILABLE   AGE
 order-worker   3/3     3            3           27d
 ```
 
-Nachher, nach zwei Klicks auf `−`:
+Nachher, nach einem Klick auf `−`:
 ```
 NAME           READY   UP-TO-DATE   AVAILABLE   AGE
 order-worker   1/1     1            1           27d
@@ -171,6 +171,6 @@ Nachher ist `food-delivery-db-1` Primary, `food-delivery-db-rw` zeigt auf die ne
 
 **Der Failover dauert gut drei Minuten, nicht Sekunden.** Wir haben ihn an diesem Tag dreimal ausgelöst, jedes Mal mit demselben Ergebnis. Beim Löschen des Pods fährt PostgreSQL zuerst kontrolliert herunter und wartet, bis alle Clients sich abmelden. Die Connection-Pools von Control API und Order Worker tun das nicht von selbst, also wartet PostgreSQL das volle Zeitlimit `smartShutdownTimeout` von 180 Sekunden ab. Solange läuft die Replikation weiter, und der Operator darf die Replica nicht befördern, um nicht zwei Primaries gleichzeitig zu haben. Das Operator-Log sagt genau das: «Waiting for all WAL receivers to be down to elect a new primary». Bei einem echten Absturz des Knotens entfällt dieses Warten.
 
-**Bei jedem Failover landen Events in der Dead Letter Queue.** Während der drei Minuten kann der Order Worker nicht schreiben, und fehlgeschlagene Nachrichten gehen bei uns ohne Wiederholung direkt in die DLQ. Bei den drei Durchläufen stieg `food.dead` um 7, 11 und 4 Nachrichten. Das ist die Schwäche, die wir in der Architekturdokumentation schon benannt haben, hier ist sie belegt.
+**Bei jedem Failover landen Events in der Dead Letter Queue.** Während der drei Minuten schreibt der Order Worker über seine offenen Verbindungen normal weiter. Erst wenn PostgreSQL diese nach 180 Sekunden trennt, schlagen für wenige Sekunden Schreibversuche fehl, bis `food-delivery-db-rw` auf den neuen Primary zeigt. Diese Nachrichten gehen bei uns ohne Wiederholung direkt in die DLQ. Bei den drei Durchläufen stieg `food.dead` um 7, 11 und 4 Nachrichten. Das ist die Schwäche, die wir in der Architekturdokumentation schon benannt haben, hier ist sie belegt.
 
 **Der Engpass verschiebt sich.** Die Küchen arbeiten die Bestellungen schnell ab, danach warten sie beim einzigen Kurier. `courier-dispatch` hatte während der Aufnahmen rund 60 wartende Nachrichten, abgebaut wird eine pro Minute. Hochskalieren an einer Stelle beschleunigt nur bis zum nächsten Engpass.

@@ -64,6 +64,13 @@ Dazu kommen die Steuerungsevents `simulation.started`, `simulation.paused` und `
 
 Jedes Event trägt `event_id`, `event_type`, `event_version`, `occurred_at`, `correlation_id`, `source` und einen typisierten Payload. Die `event_id` ist die Grundlage der Deduplizierung, die `correlation_id` verbindet alle Events einer Bestellung.
 
+### Bestätigung, Fehler und Rückstau
+
+- **Senden:** Der Publisher nutzt Publisher Confirms. Ein Event gilt erst als gesendet, wenn RabbitMQ den Empfang bestätigt hat. Die Nachrichten sind persistent und überstehen einen Neustart des Brokers.
+- **Empfangen:** Alle Consumer bestätigen von Hand, Auto-Ack ist aus. Das Ack kommt erst, wenn die Verarbeitung fertig ist, beim Order Worker also nach dem Commit in PostgreSQL. Stirbt ein Pod vorher, bleibt die Nachricht unbestätigt, und RabbitMQ stellt sie einem anderen Consumer zu.
+- **Fehler:** Ungültiges JSON oder ein Fehler bei der Verarbeitung führen zu einem Nack ohne Requeue. Die Queue gibt die Nachricht über den Dead Letter Exchange `food.dlx` an `food.dead` weiter. Wird ein Pod mitten in der Verarbeitung heruntergefahren, gibt er die Nachricht mit Requeue zurück. Einen Retry mit Wartezeit gibt es nicht, auch ein kurzer Datenbankfehler landet deshalb direkt in der DLQ.
+- **Rückstau und Skalierung:** Der Prefetch begrenzt, wie viele unbestätigte Nachrichten ein Consumer gleichzeitig hält, bei Restaurant und Kurier eine, beim Order Worker 16. Kommen mehr Nachrichten an, als verarbeitet werden, wächst `messages_ready` der Queue. Mehrere Pods an derselben Queue teilen sich die Arbeit als Competing Consumers, jede Nachricht geht an genau einen. In der Demo baut so eine dreifache Pizza-Küche den Rückstau ab (Szenario 4 in [demo.md](demo.md)).
+
 ## Datenhaltung
 
 Der Order Worker ist der einzige Schreiber des fachlichen Zustands. Alle anderen Dienste lesen oder reagieren auf Events.
