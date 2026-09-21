@@ -48,4 +48,9 @@ Schwierig fand ich, über das ganze Projekt hinweg den Überblick zu behalten. M
 
 Die Zusammenarbeit mit Kim war durchgehend angenehm. Wir kannten beide dieses Produkt vorher nicht, und dadurch konnten wir uns gegenseitig helfen, die Grundlagen zu verstehen und sie anschliessend auch anzuwenden.
 
-### Kim Flückiger
+### Kim Flükiger
+Für mich war vor allem das Zusammenspiel der verschiedenen Komponenten eine spannende Erfahrung. Gerade zu Beginn stellte die Zusammenarbeit über GitHub eine Herausforderung dar. Durch die parallele Arbeit an denselben Dateien entstanden mehrfach Merge-Konflikte, die uns anfangs viel Zeit kosteten. Mit zunehmender Projektdauer konnten wir diese jedoch immer besser verstehen und sauber lösen.
+
+Auch die Abhängigkeiten zwischen den einzelnen Services waren nicht immer einfach nachzuvollziehen. Wenn eine Komponente nicht korrekt funktionierte, konnte dies Auswirkungen auf mehrere andere Teile des Systems haben. Durch systematisches Troubleshooting und zahlreiche Tests konnten wir die Ursachen aber jeweils finden und beheben. Am Ende lief das Zusammenspiel mit den richtigen Dependencies stabil und wie geplant.
+
+Besonders wertvoll war für mich, die theoretischen Inhalte aus dem Unterricht praktisch anzuwenden. Dadurch habe ich ein deutlich besseres Verständnis für Kubernetes, Containerisierung und das Zusammenspiel moderner Plattformkomponenten gewonnen. Die Zusammenarbeit mit Kilian war dabei sehr angenehm, da wir uns gegenseitig unterstützen und gemeinsam Lösungen erarbeiten konnten. Insgesamt war das Projekt für mich eine lehrreiche Erfahrung, aus der ich viel für zukünftige Projekte mitnehme.
