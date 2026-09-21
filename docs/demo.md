@@ -1,6 +1,6 @@
 # Demo-Nachweis
 
-Alle Bilder sind Bildschirmaufnahmen des laufenden Systems vom 21.09.2026. Die Oberflächen und die Szenarien 1 und 3 bis 6 stammen vom Cluster `teko-k8s` auf Kilians Rechner (17:30 bis 18:55). Szenario 2 hat Kim am Nachmittag auf dem eigenen Cluster unter Windows aufgenommen, mit derselben Anwendung aus unserem gemeinsamen Repository.
+Alle Bilder sind Bildschirmaufnahmen vom 21.09.2026. Die Bilder zu den Steuerknöpfen stammen von einem zweiten Cluster unter Windows, mit derselben Anwendung aus dem Repository.
 
 ## Die vier Oberflächen
 
@@ -32,19 +32,74 @@ Die Datenbank läuft als CloudNativePG-Cluster mit einem Primary und einer Repli
 
 ## Die Steuerknöpfe im Dashboard
 
-Die vier Knöpfe auf den Karten rufen Admin-Endpoints der Control API auf. Die Control API schreibt dann direkt gegen die Kubernetes-API, das Dashboard simuliert also nichts.
+Die vier Knöpfe auf den Karten rufen Admin-Endpoints der Control API auf. Die Control API schreibt dann direkt gegen die Kubernetes-API. Ein Klick ändert also den echten Cluster, nicht nur die Anzeige.
 
 | Knopf | Wirkung im Cluster |
 |---|---|
-| Neustart (Pfeil) | setzt im Pod-Template die Annotation `restartedAt`, wie `kubectl rollout restart` |
+| Neustart (Pfeil) | setzt im Pod-Template die Annotation `kubectl.kubernetes.io/restartedAt`, wie `kubectl rollout restart` |
 | Plus / Minus | setzt `spec.replicas` des Deployments um eins höher oder tiefer |
 | Totenkopf | löscht nach einer Rückfrage einen zufällig gewählten Pod des Deployments |
 
 Damit die Control API das darf, läuft sie unter einem eigenen ServiceAccount. Dessen Role erlaubt neben Leserechten nur, Deployments zu patchen und Pods aufzulisten und zu löschen (`deploy/overlays/bonus-pod-admin/rbac-control-api-admin.yaml`). Zusätzlich lässt der Code nur fünf Deployments zu: Control API, Order Worker und die drei Restaurants (`internal/api/server.go`). Die Aufrufe gegen Kubernetes stehen in `internal/cluster/controller.go`.
 
+### Demo: Pod-Admin-Controls (Block 7 Bonus)
+
+Diese Seite belegt, dass die Admin-Buttons im Dashboard (⟲ Restart, + / − Skalieren, 💀 Chaos-Kill) echte, verifizierbare Aktionen im Kubernetes-Cluster auslösen — nicht nur kosmetisch im Frontend simuliert sind. Zwei getrennte Use-Cases: einmal per GUI-Screenshot belegt (Order Worker), einmal per durchgehender Terminal-Live-Beobachtung (Control API).
+
+#### Übersicht
+
+Die Systemansicht zeigt live den Zustand aller Deployments. Bei `control-api` und `order-worker` stehen zusätzlich Steuer-Buttons zur Verfügung, dazu die tatsächlichen Pod-Namen als Live-Badges (grün = ready).
+
+<img width="524" height="334" alt="Systemübersicht mit Admin-Controls" src="https://github.com/user-attachments/assets/d60de183-e0eb-4fa2-a4d8-22dda6540a2c" />
+
+---
+
+#### Use Case 1: Order Worker (GUI-Screenshots)
+
+Restart-Klick bei `order-worker` im Dashboard:
+
+<img width="88" height="63" alt="image" src="https://github.com/user-attachments/assets/a106dc38-118f-4701-972c-2d340bf19d45" />
+
+<img width="96" height="95" alt="image" src="https://github.com/user-attachments/assets/0a17ebf1-f459-4448-9ab4-030ca964350b" />
+
+**Skalierung, unabhängig per `kubectl` verifiziert** — `kubectl -n food-delivery get deployment order-worker`:
+
+Vorher:
+```
+NAME           READY   UP-TO-DATE   AVAILABLE   AGE
+order-worker   3/3     3            3           27d
+```
+
+Nachher, nach zwei Klicks auf `−`:
+```
+NAME           READY   UP-TO-DATE   AVAILABLE   AGE
+order-worker   1/1     1            1           27d
+```
+
+`READY` sinkt von `3/3` auf `1/1` — exakt der erwartete Effekt eines Scale-Down-Klicks.
+
+---
+
+#### Use Case 2: Control API (durchgehende Terminal-Live-Beobachtung)
+
+Statt einzelner Vorher/Nachher-Screenshots wurde hier eine durchgehende `kubectl get pods -w`-Sitzung mitgeschnitten, während im Dashboard nacheinander **Scale runter, Restart, Chaos-Kill und Scale hoch** bei `control-api` geklickt wurden. Das Log zeigt alle vier Aktionen im echten Cluster-Verhalten:
+
+<img width="423" height="300" alt="image" src="https://github.com/user-attachments/assets/0fce68cf-dfeb-4020-af39-c92c49e472ac" />
+
+**Wie man die einzelnen Aktionen im Log unterscheidet:**
+
+- **Restart** → ein neuer `pod-template-hash` taucht auf (z. B. `5597709890` → `5c5f78dd5`). Alle Pods des alten Hash gehen `Terminating` → `Completed`, während neue Pods mit dem neuen Hash `Pending` → `ContainerCreating` → `Running` durchlaufen. Rollierend, nie alle gleichzeitig down.
+- **Scale up** → mehrere neue Pods (gleicher Hash wie die bereits laufenden) erscheinen gleichzeitig bei `Pending`, ohne dass alte Pods verschwinden.
+- **Scale down** → einzelne Pods gehen `Terminating` → `Completed`, ohne dass neue nachkommen, und die Gesamtzahl bleibt danach dauerhaft niedriger.
+- **Chaos-Kill** → **ein einzelner** Pod (gleicher Hash wie die übrigen, die weiterlaufen) geht unerwartet `Terminating`, während alle anderen ungestört `Running` bleiben — direkt danach erscheint automatisch ein Ersatz-Pod mit demselben Hash. Der Unterschied zu Restart: nur einer betroffen, nicht das ganze ReplicaSet.
+
+#### Fazit
+
+Alle Aktionen wurden sowohl über die GUI als auch unabhängig per `kubectl` verifiziert. Die Zahlen und Pod-Namen im Dashboard stimmen mit dem tatsächlichen Cluster-Zustand überein — die Admin-Endpoints (`internal/cluster/controller.go`, `internal/api/server.go`) führen echte, autorisierte Schreiboperationen gegen die Kubernetes-API aus (RBAC: `deploy/overlays/bonus-pod-admin/rbac-control-api-admin.yaml`).
+
 ## Szenario 1: Pod fällt aus, Kubernetes ersetzt ihn
 
-Der Totenkopf-Knopf löscht einen Pod des gewählten Deployments. Vorher fragt das Dashboard nach.
+Der Totenkopf-Knopf löscht einen Pod des gewählten Deployments. Vorher fragt das Dashboard nach. «Simuliert Ausfall» heisst hier: Der Pod wird wirklich gelöscht, der Ausfall ist echt, nur absichtlich ausgelöst.
 
 <img src="demo/05_selbstheilung_dialog.png" alt="Rückfrage vor dem Löschen" width="65%">
 
@@ -62,43 +117,7 @@ Laut Pod-Status ist der neue Pod sieben Sekunden nach dem Start bereit. Eine Min
 
 ![Systemansicht nach der Selbstheilung](demo/09_selbstheilung_dashboard.png)
 
-## Szenario 2: Neustart und Skalieren
-
-Beim Order Worker haben wir Minus und Neustart ausprobiert. Dass Minus wirklich den Cluster verändert, zeigt `kubectl -n food-delivery get deployment order-worker` unabhängig vom Dashboard. Vorher:
-
-```
-NAME           READY   UP-TO-DATE   AVAILABLE   AGE
-order-worker   3/3     3            3           27d
-```
-
-Nach dem Runterskalieren über Minus:
-
-```
-NAME           READY   UP-TO-DATE   AVAILABLE   AGE
-order-worker   1/1     1            1           27d
-```
-
-Mit diesem einen Pod sieht der Neustart so aus: Links die Karte vor dem Klick, rechts direkt danach. Ein neuer Pod startet (noch grau), der alte läuft weiter, und unten steht «Neustart ausgelöst».
-
-<div class="bildpaar">
-<img src="demo/10_neustart_vorher.png" alt="Order Worker vor dem Neustart" width="176">
-<img src="demo/11_neustart_klick.png" alt="Order Worker direkt nach dem Neustart-Klick" width="192">
-</div>
-
-Bei der Control API lief während vier Aktionen `kubectl get pods -l app.kubernetes.io/name=control-api -w` mit. Im Protokoll folgen sie so aufeinander: Minus, Neustart, Totenkopf, Plus.
-
-<img src="demo/12_protokoll_control_api.png" alt="Protokoll der Control-API-Pods während der vier Aktionen" width="500">
-
-### So erkennt man die Aktionen im Protokoll
-
-- **Minus:** Einzelne Pods gehen auf `Terminating` und dann `Completed`, und es kommt kein neuer nach. Oben im Bild verschwinden so zwei der drei Pods.
-- **Neustart:** Ein Pod mit einem neuen Hash im Namen erscheint und durchläuft `Pending`, `ContainerCreating` und `Running`. Erst wenn er bereit ist, geht der alte auf `Terminating`. Der Neustart läuft rollend, es ist nie alles gleichzeitig weg.
-- **Totenkopf:** Genau ein Pod geht auf `Terminating`, und sofort erscheint ein Ersatz mit demselben Hash. Beim Neustart bekommt der Ersatz einen neuen Hash, weil sich das Pod-Template geändert hat. Beim Totenkopf bleibt das Template gleich, das ReplicaSet ersetzt nur den fehlenden Pod.
-- **Plus:** Neue Pods mit demselben Hash erscheinen, ohne dass alte verschwinden. Am Ende laufen wieder drei.
-
-Die Pod-Namen und Zahlen im Dashboard stimmten dabei jeweils mit `kubectl` überein.
-
-## Szenario 3: Soll und Ist
+## Szenario 2: Soll und Ist
 
 Ein Klick auf Plus bei der Control API stellt sie auf drei Pods, nach wenigen Sekunden laufen alle drei (`3/3`). Das ändert nur den Cluster, nicht das Manifest. `kubectl diff` zeigt die Abweichung genau an.
 
@@ -108,7 +127,7 @@ Ein Klick auf Plus bei der Control API stellt sie auf drei Pods, nach wenigen Se
 
 ![Soll-Zustand wiederhergestellt](demo/14_drift_nachher.png)
 
-## Szenario 4: Eine Küche fällt aus, die Bestellungen stauen sich
+## Szenario 3: Eine Küche fällt aus, die Bestellungen stauen sich
 
 Die Pizza-Küche wird auf null skaliert, danach gehen über den Knopf «Bestellung» 30 Bestellungen ein. Sie verteilen sich reihum auf die drei Restaurants. Bei Pizza bleiben sie liegen, Bowl und Curry arbeiten ihren Teil sofort ab.
 
@@ -120,7 +139,7 @@ In Grafana steht «Pizza-Worker bereit» auf 0, die Pizza-Kurve steigt. Der Ausf
 
 ![Rückstau in Grafana](demo/17_rueckstau_grafana.png)
 
-## Szenario 5: Hochskalieren löst den Stau auf
+## Szenario 4: Hochskalieren löst den Stau auf
 
 Die Pizza-Küche läuft jetzt dreifach.
 
@@ -134,7 +153,7 @@ Grafana zeigt den ganzen Verlauf: Anstieg, Abbau auf null, drei Worker bereit. D
 
 ![Rückstau aufgelöst](demo/20_rueckstau_aufgeloest_grafana.png)
 
-## Szenario 6: Datenbank-Failover
+## Szenario 5: Datenbank-Failover
 
 Vorher ist `food-delivery-db-2` der Primary, `food-delivery-db-rw` zeigt auf dessen IP, und in der Datenbank liegen 5762 Bestellungen, alle seit der Einrichtung am 31.08.
 
